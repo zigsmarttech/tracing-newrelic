@@ -17,7 +17,7 @@ main =
       }
 
 newrelicVersion :: String
-newrelicVersion = "1.2.0"
+newrelicVersion = "1.3.0"
 
 newrelicBuildDir :: String
 newrelicBuildDir = "_build"
