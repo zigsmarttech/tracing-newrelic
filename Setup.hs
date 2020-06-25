@@ -45,10 +45,18 @@ makeLibNewrelic _ _ = do
         ""
     _ <-
       withCurrentDirectory newrelicSdkDir
-        $ readProcess
-          "make"
-          ["static", "CFLAGS='-Wno-missing-field-initializers'"]
-          ""
+        $ do
+          _ <- readProcess
+            "sed"
+            [ "-Ei"
+            , "s/AGENT_VERSION.*/AGENT_VERSION := " <> newrelicVersion <> ".0/"
+            , "vendor/newrelic/make/version.mk"
+            ]
+            ""
+          readProcess
+            "make"
+            ["static", "CFLAGS='-Wno-missing-field-initializers'"]
+            ""
     pure emptyHookedBuildInfo
 
 -- All this does is programmatically edit "package.yaml" (or, well, the .cabal file)
