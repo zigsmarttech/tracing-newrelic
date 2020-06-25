@@ -106,7 +106,7 @@ module Tracing.NewRelic
     )
 where
 
-import Data.Int (Int, Int16, Int32, Int64)
+import Data.Int (Int16, Int32, Int64)
 import Data.Word (Word64)
 import qualified Data.Text as Text
 import Foreign.C.String
