@@ -5,6 +5,8 @@ import Distribution.Simple.Setup (CleanFlags, ConfigFlags)
 import System.Directory (createDirectoryIfMissing, getCurrentDirectory, removeDirectoryRecursive, withCurrentDirectory)
 import System.Process (readProcess)
 
+import Debug.Trace (trace)
+
 main :: IO ()
 main =
   defaultMainWithHooks
@@ -30,30 +32,30 @@ newrelicSdkDir = "c-sdk-" <> newrelicVersion
 -- c-sdk so we have the include headers needed to compile the hsc file.
 makeLibNewrelic :: Args -> ConfigFlags -> IO HookedBuildInfo
 makeLibNewrelic _ _ = do
-  _ <- createDirectoryIfMissing False newrelicBuildDir
-  withCurrentDirectory newrelicBuildDir $ do
+  _ <- trace "create temp dir" $ createDirectoryIfMissing False newrelicBuildDir
+  withCurrentDirectory newrelicBuildDir $ trace "use temp dir" $ do
     let filename = "v" <> newrelicVersion <> ".tar.gz"
-    _ <-
+    _ <- trace "download c-sdk" $
       readProcess
         "curl"
         ["-OL", "https://github.com/newrelic/c-sdk/archive/" <> filename]
         ""
-    _ <-
+    _ <- trace "unpack c-sdk" $
       readProcess
         "tar"
         ["xzf", filename]
         ""
     _ <-
       withCurrentDirectory newrelicSdkDir
-        $ do
-          _ <- readProcess
+        $ trace "use c-sdk dir" $ do
+          _ <- trace "fix version in c-sdk" $ readProcess
             "sed"
             [ "-Ei"
             , "s/AGENT_VERSION.*/AGENT_VERSION := " <> newrelicVersion <> ".0/"
             , "vendor/newrelic/make/version.mk"
             ]
             ""
-          readProcess
+          trace "build c-sdk" $ readProcess
             "make"
             ["static", "CFLAGS='-Wno-missing-field-initializers'"]
             ""
