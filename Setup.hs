@@ -59,7 +59,7 @@ makeLibNewrelic _ _ = do
             "make"
             ["static", "CFLAGS='-Wno-missing-field-initializers'"]
             ""
-    pure emptyHookedBuildInfo
+    pure $ trace "successfully finished" emptyHookedBuildInfo
 
 -- All this does is programmatically edit "package.yaml" (or, well, the .cabal file)
 -- to add `extra-lib-dirs` and `include-dirs` pointing to the newrelic C-SDK paths

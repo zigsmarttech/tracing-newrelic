@@ -94,6 +94,7 @@ module Tracing.NewRelic
     ExternalSegment (..),
     DatastoreSegment (..),
     DatastoreSegmentProduct (..),
+    CustomEvent,
     LicenseKey(..),
     AppName(..),
     TimeoutMs(..),
