@@ -89,6 +89,7 @@ module Tracing.NewRelic
     App,
     AppConfig,
     Transaction,
+    CustomEvent,
     Segment,
     LogLevel(..),
     ExternalSegment (..),
