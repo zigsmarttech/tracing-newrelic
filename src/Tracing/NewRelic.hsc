@@ -107,14 +107,18 @@ module Tracing.NewRelic
     )
 where
 
+import Control.Monad.IO.Class (liftIO)
 import Data.Int (Int16, Int32, Int64)
 import Data.Word (Word64)
 import qualified Data.Text as Text
+import qualified Data.Text.Encoding as Encoding
+import qualified Data.ByteString as ByteString
 import Foreign.C.String
 import Foreign.C.Types
 import Foreign.Concurrent (newForeignPtr)
+import FreeAfter (FreeAfter(..), freeAfter)
 import Foreign.ForeignPtr (ForeignPtr, withForeignPtr)
-import Foreign.Marshal.Alloc (alloca, free)
+import Foreign.Marshal.Alloc (alloca, allocaBytesAligned, free)
 import Foreign.Ptr
 import Foreign.Storable
 import Prelude hiding (init)
@@ -323,22 +327,16 @@ data ExternalSegment
         }
   deriving (Show)
 
-instance Storable ExternalSegment where
-
-  alignment _ = (#alignment newrelic_external_segment_params_t)
-
-  sizeOf _ = (#size newrelic_external_segment_params_t)
-
-  peek ptr = do
-    ExternalSegment
-      <$> (peekTextOff ptr (#offset newrelic_external_segment_params_t, uri))
-      <*> (peekMaybeTextOff ptr (#offset newrelic_external_segment_params_t, procedure))
-      <*> (peekMaybeTextOff ptr (#offset newrelic_external_segment_params_t, library))
-
-  poke ptr (ExternalSegment uri procedure library) = do
+withExternalSegment :: ExternalSegment -> FreeAfter b (Ptr ExternalSegment)
+withExternalSegment (ExternalSegment uri procedure library) = do
+    ptr <-
+      FreeAfter $ allocaBytesAligned
+        (#size newrelic_external_segment_params_t)
+        (#alignment newrelic_external_segment_params_t)
     pokeTextOff ptr (#offset newrelic_external_segment_params_t, uri) uri
     pokeMaybeTextOff ptr (#offset newrelic_external_segment_params_t, procedure) procedure
     pokeMaybeTextOff ptr (#offset newrelic_external_segment_params_t, library) library
+    pure ptr
 
 -- |
 -- The `datastoreSegmentProduct` field of the `DatastoreSegment` specifies the
@@ -436,53 +434,25 @@ data DatastoreSegment
         }
   deriving (Show)
 
-instance Storable DatastoreSegment where
-
-  alignment _ = (#alignment newrelic_datastore_segment_params_t)
-
-  sizeOf _ = (#size newrelic_datastore_segment_params_t)
-
-  peek ptr = do
-    DatastoreSegment
-      <$> (peekDatastoreSegmentProductOff ptr (#offset newrelic_datastore_segment_params_t, product))
-      <*> (peekMaybeTextOff ptr (#offset newrelic_datastore_segment_params_t, collection))
-      <*> (peekMaybeTextOff ptr (#offset newrelic_datastore_segment_params_t, operation))
-      <*> (peekMaybeTextOff ptr (#offset newrelic_datastore_segment_params_t, host))
-      <*> (peekMaybeTextOff ptr (#offset newrelic_datastore_segment_params_t, port_path_or_id))
-      <*> (peekMaybeTextOff ptr (#offset newrelic_datastore_segment_params_t, database_name))
-      <*> (peekMaybeTextOff ptr (#offset newrelic_datastore_segment_params_t, query))
-    where
-      peekDatastoreSegmentProductOff :: Ptr a -> Int -> IO DatastoreSegmentProduct
-      peekDatastoreSegmentProductOff ptr' offset = do
-        maybeText <- peekMaybeTextOff ptr' offset
-        pure $ case maybeText of
-          Nothing -> OtherDatastoreSegmentProduct (#const_str NEWRELIC_DATASTORE_OTHER)
-          Just (#const_str NEWRELIC_DATASTORE_FIREBIRD) -> Firebird
-          Just (#const_str NEWRELIC_DATASTORE_INFORMIX) -> Informix
-          Just (#const_str NEWRELIC_DATASTORE_MSSQL) -> MSSQL
-          Just (#const_str NEWRELIC_DATASTORE_MYSQL) -> MySQL
-          Just (#const_str NEWRELIC_DATASTORE_ORACLE) -> Oracle
-          Just (#const_str NEWRELIC_DATASTORE_POSTGRES) -> Postgres
-          Just (#const_str NEWRELIC_DATASTORE_SQLITE) -> SQLite
-          Just (#const_str NEWRELIC_DATASTORE_SYBASE) -> Sybase
-          Just (#const_str NEWRELIC_DATASTORE_MEMCACHE) -> Memcached
-          Just (#const_str NEWRELIC_DATASTORE_MONGODB) -> MongoDB
-          Just (#const_str NEWRELIC_DATASTORE_ODBC) -> ODBC
-          Just (#const_str NEWRELIC_DATASTORE_REDIS) -> Redis
-          Just text -> OtherDatastoreSegmentProduct text
-
-  poke ptr (DatastoreSegment product' collection operation host portPathOrId databaseName query) = do
-    pokeDatastoreSegmentProductOff ptr (#offset newrelic_datastore_segment_params_t, product) product'
-    pokeMaybeTextOff ptr (#offset newrelic_datastore_segment_params_t, collection) collection
-    pokeMaybeTextOff ptr (#offset newrelic_datastore_segment_params_t, operation) operation
-    pokeMaybeTextOff ptr (#offset newrelic_datastore_segment_params_t, host) host
-    pokeMaybeTextOff ptr (#offset newrelic_datastore_segment_params_t, port_path_or_id) portPathOrId
-    pokeMaybeTextOff ptr (#offset newrelic_datastore_segment_params_t, database_name) databaseName
-    pokeMaybeTextOff ptr (#offset newrelic_datastore_segment_params_t, query) query
-    where
-      pokeDatastoreSegmentProductOff :: Ptr a -> Int -> DatastoreSegmentProduct -> IO ()
-      pokeDatastoreSegmentProductOff ptr' offset datastoreSegmentProduct = do
+withDatastoreSegment :: DatastoreSegment -> FreeAfter b (Ptr DatastoreSegment)
+withDatastoreSegment (DatastoreSegment product' collection operation host portPathOrId databaseName query) =
+    let
+      pokeDatastoreSegmentProductOff :: Ptr a -> Int -> DatastoreSegmentProduct -> FreeAfter b ()
+      pokeDatastoreSegmentProductOff ptr' offset datastoreSegmentProduct =
         pokeTextOff ptr' offset $ Text.pack (show datastoreSegmentProduct)
+    in do
+      ptr <-
+        FreeAfter $ allocaBytesAligned
+          (#size newrelic_datastore_segment_params_t)
+          (#alignment newrelic_datastore_segment_params_t)
+      pokeDatastoreSegmentProductOff ptr (#offset newrelic_datastore_segment_params_t, product) product'
+      pokeMaybeTextOff ptr (#offset newrelic_datastore_segment_params_t, collection) collection
+      pokeMaybeTextOff ptr (#offset newrelic_datastore_segment_params_t, operation) operation
+      pokeMaybeTextOff ptr (#offset newrelic_datastore_segment_params_t, host) host
+      pokeMaybeTextOff ptr (#offset newrelic_datastore_segment_params_t, port_path_or_id) portPathOrId
+      pokeMaybeTextOff ptr (#offset newrelic_datastore_segment_params_t, database_name) databaseName
+      pokeMaybeTextOff ptr (#offset newrelic_datastore_segment_params_t, query) query
+      pure ptr
 
 
 -- |
@@ -525,9 +495,9 @@ init :: DaemonSocket
         -- If this is 0, then a default value will be used.
         -> IO Bool
         -- ^ `True` on success; `False` otherwise.
-init (DaemonSocket daemonSocket) (TimeLimitMs timeLimitMs) =
-  withMaybeTextCString daemonSocket $ \cDaemonSocket ->
-    newrelic_init cDaemonSocket (CInt timeLimitMs)
+init (DaemonSocket daemonSocket) (TimeLimitMs timeLimitMs) = freeAfter $ do
+  cDaemonSocket <- withMaybeTextCString daemonSocket
+  liftIO $ newrelic_init cDaemonSocket (CInt timeLimitMs)
 
 -- |
 -- Configure the C SDK's logging system.
@@ -545,9 +515,9 @@ configureLog :: Text
                 -- The lowest level of log message that will be output.
                 -> IO Bool
                 -- ^ `True` on success; `False` otherwise.
-configureLog filename level =
-  withTextCString filename $ \cFilename ->
-    newrelic_configure_log cFilename (toEnum (fromEnum level))
+configureLog filename level = freeAfter $ do
+  cFilename <- withTextCString filename
+  liftIO $ newrelic_configure_log cFilename (toEnum (fromEnum level))
 
 -- |
 -- Create a populated application configuration.
@@ -568,15 +538,17 @@ createAppConfig :: AppName
                    -> IO AppConfig
                    -- ^ An application configuration populated with "application name" and "license key";
                    -- all other fields are initialized to their defaults.
-createAppConfig (AppName appName) (LicenseKey licenseKey) =
-  withTextCString appName $ \cAppName ->
-    withTextCString licenseKey $ \cLicenseKey -> do
-      configPtr <- newrelic_create_app_config cAppName cLicenseKey
-      if configPtr == nullPtr
-        then throwIO CantCreateNewRelicAppConfig
-        else do
-          foreignConfigPtr <- newForeignPtr configPtr (destroy configPtr newrelic_destroy_app_config)
-          pure $ AppConfig foreignConfigPtr
+createAppConfig (AppName appName) (LicenseKey licenseKey) = freeAfter $ do
+  cAppName <- withTextCString appName
+  cLicenseKey <- withTextCString licenseKey
+  configPtr <- liftIO $ newrelic_create_app_config cAppName cLicenseKey
+  if configPtr == nullPtr
+    then liftIO $ throwIO CantCreateNewRelicAppConfig
+    else do
+      foreignConfigPtr <- liftIO $ newForeignPtr configPtr $ freeAfter $ do
+        ptr <- destroy configPtr
+        liftIO $ newrelic_destroy_app_config ptr
+      pure $ AppConfig foreignConfigPtr
 
 -- |
 -- Specifies whether or not distributed tracing is enabled.
@@ -681,14 +653,16 @@ createApp :: AppConfig
              -- ^
              -- An allocated application, or throws on error; any errors resulting from a
              -- badly-formed configuration are logged.
-createApp (AppConfig foreignAppConfigPtr) (TimeoutMs timeout) =
-  withForeignPtr foreignAppConfigPtr $ \appConfigPtr -> do
-    appPtr <- newrelic_create_app appConfigPtr (CShort timeout)
-    if appPtr == nullPtr
-      then throwIO CantCreateNewRelicApp
-      else do
-        foreignAppPtr <- newForeignPtr appPtr (destroy appPtr newrelic_destroy_app)
-        pure $ App foreignAppPtr
+createApp (AppConfig foreignAppConfigPtr) (TimeoutMs timeout) = freeAfter $ do
+  appConfigPtr <- FreeAfter $ withForeignPtr foreignAppConfigPtr
+  appPtr <- liftIO $ newrelic_create_app appConfigPtr (CShort timeout)
+  if appPtr == nullPtr
+    then liftIO $ throwIO CantCreateNewRelicApp
+    else do
+      foreignAppPtr <- liftIO $ newForeignPtr appPtr $ freeAfter $ do
+        ptr <- destroy appPtr
+        liftIO $ newrelic_destroy_app ptr
+      pure $ App foreignAppPtr
 
 -- |
 -- Start a web based transaction.
@@ -704,13 +678,13 @@ startWebTransaction :: App
                       -- The name for the transaction.
                       -> IO (Maybe Transaction)
                       -- Just a transaction, or `Nothing` if the transaction couldn't be created.
-startWebTransaction (App foreignAppPtr) name =
-  withForeignPtr foreignAppPtr $ \appPtr ->
-    withTextCString name $ \cName -> do
-      transactionPtr <- newrelic_start_web_transaction appPtr cName
-      if transactionPtr == nullPtr
-        then pure Nothing
-        else pure $ Just $ Transaction transactionPtr
+startWebTransaction (App foreignAppPtr) name = freeAfter $ do
+  appPtr <- FreeAfter $ withForeignPtr foreignAppPtr
+  cName <- withTextCString name
+  transactionPtr <- liftIO $ newrelic_start_web_transaction appPtr cName
+  if transactionPtr == nullPtr
+    then pure Nothing
+    else pure $ Just $ Transaction transactionPtr
 
 -- |
 -- Start a non-web based transaction.
@@ -726,13 +700,13 @@ startNonWebTransaction :: App
                           -- The name for the transaction.
                           -> IO (Maybe Transaction)
                           -- Just a transaction, or `Nothing` if the transaction couldn't be created.
-startNonWebTransaction (App foreignAppPtr) name =
-  withForeignPtr foreignAppPtr $ \appPtr ->
-    withTextCString name $ \cName -> do
-      transactionPtr <- newrelic_start_non_web_transaction appPtr cName
-      if transactionPtr == nullPtr
-        then pure Nothing
-        else pure $ Just $ Transaction transactionPtr
+startNonWebTransaction (App foreignAppPtr) name = freeAfter $ do
+  appPtr <- FreeAfter $ withForeignPtr foreignAppPtr
+  cName <- withTextCString name
+  transactionPtr <- liftIO $ newrelic_start_non_web_transaction appPtr cName
+  if transactionPtr == nullPtr
+    then pure Nothing
+    else pure $ Just $ Transaction transactionPtr
 
 -- |
 -- Ignore the current transaction.
@@ -782,8 +756,9 @@ setTransactionTiming (Transaction transactionPtr) (StartTimeUsSinceUnixEpoch sta
 --
 -- Returns `False` if data cannot be sent to newrelic; true otherwise.
 endTransaction :: Transaction -> IO Bool
-endTransaction (Transaction transactionPtr) =
-  allocatePointerWith transactionPtr $ newrelic_end_transaction
+endTransaction (Transaction transactionPtr) = freeAfter $ do
+  transaction <- allocatePointerWith transactionPtr
+  liftIO $ newrelic_end_transaction transaction
 
 -- |
 -- Record the start of a custom segment in a transaction.
@@ -801,11 +776,11 @@ startSegment :: Transaction
                 -- this defaults to "Custom".
                 -> IO (Maybe Segment)
                 -- ^ A valid segment. `Nothing` if the segment couldn't be created.
-startSegment transaction@(Transaction transactionPtr) name category =
-  withMaybeTextCString name $ \cName ->
-    withMaybeTextCString category $ \cCategory -> do
-      segmentPtr <- newrelic_start_segment transactionPtr cName cCategory
-      startSegmentHelper transaction segmentPtr
+startSegment transaction@(Transaction transactionPtr) name category = freeAfter $ do
+  cName <- withMaybeTextCString name
+  cCategory <- withMaybeTextCString category
+  segmentPtr <- liftIO $ newrelic_start_segment transactionPtr cName cCategory
+  liftIO $ startSegmentHelper transaction segmentPtr
 
 -- |
 -- Start recording an external segment within a transaction.
@@ -823,10 +798,10 @@ startExternalSegment :: Transaction
                         -- If an error occurs when creating the external segment,
                         -- `Nothing` is returned, and a log message will be written
                         -- to the SDK log at LOG_ERROR level.
-startExternalSegment transaction@(Transaction transactionPtr) externalSegment =
-  allocatePointerWith externalSegment $ \externalSegmentPtr -> do
-    segmentPtr <- newrelic_start_external_segment transactionPtr externalSegmentPtr
-    startSegmentHelper transaction segmentPtr
+startExternalSegment transaction@(Transaction transactionPtr) externalSegment = freeAfter $ do
+    externalSegmentPtr <- withExternalSegment externalSegment
+    segmentPtr <- liftIO $ newrelic_start_external_segment transactionPtr externalSegmentPtr
+    liftIO $ startSegmentHelper transaction segmentPtr
 
 -- |
 -- Record the start of a datastore segment in a transaction.
@@ -844,10 +819,10 @@ startDatastoreSegment :: Transaction
                         -- If an error occurs when creating the datastore segment,
                         -- `Nothing` is returned, and a log message will be written
                         -- to the SDK log at LOG_ERROR level.
-startDatastoreSegment transaction@(Transaction transactionPtr) datastoreSegment =
-  allocatePointerWith datastoreSegment $ \datastoreSegmentPtr -> do
-    segmentPtr <- newrelic_start_datastore_segment transactionPtr datastoreSegmentPtr
-    startSegmentHelper transaction segmentPtr
+startDatastoreSegment transaction@(Transaction transactionPtr) datastoreSegment = freeAfter $ do
+  datastoreSegmentPtr <- withDatastoreSegment datastoreSegment
+  segmentPtr <- liftIO $ newrelic_start_datastore_segment transactionPtr datastoreSegmentPtr
+  liftIO $ startSegmentHelper transaction segmentPtr
 
 startSegmentHelper :: Transaction -> Ptr Segment -> IO (Maybe Segment)
 startSegmentHelper transaction segmentPtr =
@@ -916,8 +891,9 @@ endSegment :: Segment
               -- ^ `True` if the parameters represented an active segment to record as complete;
                 -- `False` otherwise. If an error occurred, a log message will be written to the
                 -- SDK log at LOG_ERROR level.
-endSegment (Segment (Transaction transactionPtr) segmentPtr) =
-  allocatePointerWith segmentPtr $ newrelic_end_segment transactionPtr
+endSegment (Segment (Transaction transactionPtr) segmentPtr) = freeAfter $ do
+  segment <- allocatePointerWith segmentPtr
+  liftIO $ newrelic_end_segment transactionPtr segment
 
 -- |
 -- Add a custom integer attribute to a transaction.
@@ -927,9 +903,9 @@ addAttributeInt :: Transaction  -- ^ An active transaction
                    -> Text      -- ^ The name of the attribute.
                    -> Int32     -- ^ The integer value of the attribute.
                    -> IO Bool   -- ^ `True` if successful; `False` otherwise.
-addAttributeInt (Transaction transactionPtr) key value =
-  withTextCString key $ \cKey ->
-    newrelic_add_attribute_int transactionPtr cKey (CInt value)
+addAttributeInt (Transaction transactionPtr) key value = freeAfter $ do
+  cKey <- withTextCString key
+  liftIO $ newrelic_add_attribute_int transactionPtr cKey (CInt value)
 
 -- |
 -- Add a custom long attribute to a transaction.
@@ -939,9 +915,9 @@ addAttributeLong :: Transaction  -- ^ An active transaction
                     -> Text      -- ^ The name of the attribute.
                     -> Int64     -- ^ The long value of the attribute.
                     -> IO Bool   -- ^ `True` if successful; `False` otherwise.
-addAttributeLong (Transaction transactionPtr) key value =
-  withTextCString key $ \cKey ->
-    newrelic_add_attribute_long transactionPtr cKey (CLong value)
+addAttributeLong (Transaction transactionPtr) key value = freeAfter $ do
+  cKey <- withTextCString key
+  liftIO $ newrelic_add_attribute_long transactionPtr cKey (CLong value)
 
 -- |
 -- Add a custom double attribute to a transaction.
@@ -951,9 +927,9 @@ addAttributeDouble :: Transaction  -- ^ An active transaction
                       -> Text      -- ^ The name of the attribute.
                       -> Double    -- ^ The double value of the attribute.
                       -> IO Bool   -- ^ `True` if successful; `False` otherwise.
-addAttributeDouble (Transaction transactionPtr) key value =
-  withTextCString key $ \cKey ->
-    newrelic_add_attribute_double transactionPtr cKey (CDouble value)
+addAttributeDouble (Transaction transactionPtr) key value = freeAfter $ do
+  cKey <- withTextCString key
+  liftIO $ newrelic_add_attribute_double transactionPtr cKey (CDouble value)
 
 -- |
 -- Add a custom text attribute to a transaction.
@@ -963,10 +939,10 @@ addAttributeText :: Transaction  -- ^ An active transaction
                     -> Text      -- ^ The name of the attribute.
                     -> Text      -- ^ The text value of the attribute.
                     -> IO Bool   -- ^ `True` if successful; `False` otherwise.
-addAttributeText (Transaction transactionPtr) key value =
-  withTextCString key $ \cKey ->
-    withTextCString value $ \cValue ->
-      newrelic_add_attribute_string transactionPtr cKey cValue
+addAttributeText (Transaction transactionPtr) key value = freeAfter $ do
+  cKey <- withTextCString key
+  cValue <- withTextCString value
+  liftIO $ newrelic_add_attribute_string transactionPtr cKey cValue
 
 -- |
 -- Generate a custom metric.
@@ -977,9 +953,9 @@ recordCustomMetric :: Transaction -- ^ An active transaction
                       -> Text     -- ^ The name/identifier for the metric.
                       -> Double   -- ^ The amount of time the metric will record, in milliseconds.
                       -> IO Bool  -- ^ `True` if successful; `False` otherwise.
-recordCustomMetric (Transaction transactionPtr) metricName milliseconds =
-  withTextCString (Text.append "Custom/" metricName) $ \cMetricName ->
-    newrelic_record_custom_metric transactionPtr cMetricName (CDouble milliseconds)
+recordCustomMetric (Transaction transactionPtr) metricName milliseconds = freeAfter $ do
+  cMetricName <- withTextCString (Text.append "Custom/" metricName)
+  liftIO $ newrelic_record_custom_metric transactionPtr cMetricName (CDouble milliseconds)
 
 -- |
 -- Record an error in a transaction.
@@ -995,10 +971,10 @@ noticeError :: Transaction -- ^ An active transaction.
                -> Text
                -- ^ A string comprising the error class.
                -> IO ()
-noticeError (Transaction transactionPtr) priority errorMessage errorClass =
-  withTextCString errorMessage $ \cErrorMessage ->
-    withTextCString errorClass $ \cErrorClass ->
-      newrelic_notice_error transactionPtr (CInt priority) cErrorMessage cErrorClass
+noticeError (Transaction transactionPtr) priority errorMessage errorClass = freeAfter $ do
+  cErrorMessage <- withTextCString errorMessage
+  cErrorClass <- withTextCString errorClass
+  liftIO $ newrelic_notice_error transactionPtr (CInt priority) cErrorMessage cErrorClass
 
 -- |
 -- Creates a custom event.
@@ -1013,13 +989,13 @@ createCustomEvent :: Text
                      -- ^ The type/name of the event
                      -> IO (Maybe CustomEvent)
                      -- ^ A custom event, or `Nothing` if the event couldn't be created.
-createCustomEvent eventType =
-  withTextCString eventType $ \cEventType -> do
-    customEventPtr <- newrelic_create_custom_event cEventType
-    if customEventPtr == nullPtr then
-      pure Nothing
-    else
-      fmap (Just . CustomEvent) $ newrelic_create_custom_event cEventType
+createCustomEvent eventType = freeAfter $ do
+  cEventType <- withTextCString eventType
+  customEventPtr <- liftIO $ newrelic_create_custom_event cEventType
+  if customEventPtr == nullPtr then
+    pure Nothing
+  else
+    liftIO $ fmap (Just . CustomEvent) $ newrelic_create_custom_event cEventType
 
 -- |
 -- Records the custom event.
@@ -1027,8 +1003,9 @@ createCustomEvent eventType =
 -- Given an active transaction, this function adds the custom event to the transaction
 -- and timestamps it, ensuring the event will be sent to New Relic.
 recordCustomEvent :: Transaction -> CustomEvent -> IO ()
-recordCustomEvent (Transaction transactionPtr) (CustomEvent eventPtr) =
-  allocatePointerWith eventPtr $ newrelic_record_custom_event transactionPtr
+recordCustomEvent (Transaction transactionPtr) (CustomEvent eventPtr) = freeAfter $ do
+  event <- allocatePointerWith eventPtr
+  liftIO $ newrelic_record_custom_event transactionPtr event
 
 -- |
 -- Adds an int key/value pair to the custom event's attributes.
@@ -1038,9 +1015,9 @@ customEventAddAttributeInt :: CustomEvent  -- ^ A custom event,
                               -> Text      -- ^ the string key for the key/value pair
                               -> Int32     -- ^ the integer value of the key/value pair
                               -> IO Bool   -- ^ `False` indicates the attribute could not be added
-customEventAddAttributeInt (CustomEvent eventPtr) key value =
-  withTextCString key $ \cKey ->
-    newrelic_custom_event_add_attribute_int eventPtr cKey (CInt value)
+customEventAddAttributeInt (CustomEvent eventPtr) key value = freeAfter $ do
+  cKey <- withTextCString key
+  liftIO $ newrelic_custom_event_add_attribute_int eventPtr cKey (CInt value)
 
 -- |
 -- Adds a long key/value pair to the custom event's attributes.
@@ -1050,9 +1027,9 @@ customEventAddAttributeLong :: CustomEvent  -- ^ A custom event,
                                -> Text      -- ^ the string key for the key/value pair
                                -> Int64     -- ^ the long value of the key/value pair
                                -> IO Bool   -- ^ `False` indicates the attribute could not be added
-customEventAddAttributeLong (CustomEvent eventPtr) key value =
-  withTextCString key $ \cKey ->
-    newrelic_custom_event_add_attribute_long eventPtr cKey (CLong value)
+customEventAddAttributeLong (CustomEvent eventPtr) key value = freeAfter $ do
+  cKey <- withTextCString key
+  liftIO $ newrelic_custom_event_add_attribute_long eventPtr cKey (CLong value)
 
 -- |
 -- Adds a double key/value pair to the custom event's attributes.
@@ -1062,9 +1039,9 @@ customEventAddAttributeDouble :: CustomEvent  -- ^ A custom event,
                                  -> Text      -- ^ the string key for the key/value pair
                                  -> Double    -- ^ the double value of the key/value pair
                                  -> IO Bool   -- ^ `False` indicates the attribute could not be added
-customEventAddAttributeDouble (CustomEvent eventPtr) key value =
-  withTextCString key $ \cKey ->
-    newrelic_custom_event_add_attribute_double eventPtr cKey (CDouble value)
+customEventAddAttributeDouble (CustomEvent eventPtr) key value = freeAfter $ do
+  cKey <- withTextCString key
+  liftIO $ newrelic_custom_event_add_attribute_double eventPtr cKey (CDouble value)
 
 -- |
 -- Adds a text key/value pair to the custom event's attributes.
@@ -1074,10 +1051,10 @@ customEventAddAttributeText :: CustomEvent  -- ^ A custom event,
                                -> Text      -- ^ the string key for the key/value pair
                                -> Text      -- ^ the text value of the key/value pair
                                -> IO Bool   -- ^ `False` indicates the attribute could not be added
-customEventAddAttributeText (CustomEvent eventPtr) key value =
-  withTextCString key $ \cKey ->
-    withTextCString value $ \cValue ->
-      newrelic_custom_event_add_attribute_string eventPtr cKey cValue
+customEventAddAttributeText (CustomEvent eventPtr) key value = freeAfter $ do
+  cKey <- withTextCString key
+  cValue <- withTextCString value
+  liftIO $ newrelic_custom_event_add_attribute_string eventPtr cKey cValue
 
 -- |
 -- Frees the memory for custom events created via the `createCustomEvent` function.
@@ -1085,8 +1062,9 @@ customEventAddAttributeText (CustomEvent eventPtr) key value =
 -- This function is here in case there's an allocated `CustomEvent` that ends up not
 -- being recorded as a custom event, but still needs to be freed.
 discardCustomEvent :: CustomEvent -> IO ()
-discardCustomEvent (CustomEvent eventPtr) =
-  allocatePointerWith eventPtr $ newrelic_discard_custom_event
+discardCustomEvent (CustomEvent eventPtr) = freeAfter $ do
+  event <- allocatePointerWith eventPtr
+  liftIO $ newrelic_discard_custom_event event
 
 -- |
 -- Create a distributed trace payload at the root segment.
@@ -1152,9 +1130,9 @@ createDistributedTracePayloadHelper ioPayload = do
   if cPayload == nullPtr
     then pure Nothing
     else do
-      payload <- peekCString cPayload
+      payload <- ByteString.packCString cPayload
       _ <- free cPayload
-      pure $ Just $ Text.pack payload
+      pure $ Just $ Encoding.decodeUtf8 payload
 
 -- |
 -- Accept a distributed trace payload.
@@ -1173,10 +1151,10 @@ acceptDistributedTracePayload :: Transaction
                                  -- ^ Transport type used for communicating the external call.
                                  -> IO Bool
                                  -- ^ `True` on success; `False` otherwise.
-acceptDistributedTracePayload (Transaction transactionPtr) payload transportType =
-  withTextCString payload $ \cPayload ->
-    withCString (show transportType) $ \cTransportType ->
-      newrelic_accept_distributed_trace_payload transactionPtr cPayload cTransportType
+acceptDistributedTracePayload (Transaction transactionPtr) payload transportType = freeAfter $ do
+  cPayload <- withTextCString payload
+  cTransportType <- FreeAfter $ withCString (show transportType)
+  liftIO $ newrelic_accept_distributed_trace_payload transactionPtr cPayload cTransportType
 
 -- |
 -- Accept a distributed trace payload, an HTTP-safe, base64-encoded string.
@@ -1184,10 +1162,10 @@ acceptDistributedTracePayload (Transaction transactionPtr) payload transportType
 -- This function offers the same behaviour as `acceptDistributedTracePayload` but accepts a
 -- base64-encoded string for the payload.
 acceptDistributedTracePayloadHttpSafe :: Transaction -> Text -> TransportType -> IO Bool
-acceptDistributedTracePayloadHttpSafe (Transaction transactionPtr) payload transportType =
-  withTextCString payload $ \cPayload ->
-    withCString (show transportType) $ \cTransportType ->
-      newrelic_accept_distributed_trace_payload_httpsafe transactionPtr cPayload cTransportType
+acceptDistributedTracePayloadHttpSafe (Transaction transactionPtr) payload transportType = freeAfter $ do
+  cPayload <- withTextCString payload
+  cTransportType <- FreeAfter $ withCString (show transportType)
+  liftIO $ newrelic_accept_distributed_trace_payload_httpsafe transactionPtr cPayload cTransportType
 
 -- |
 -- Get the NewRelic C SDK version.
@@ -1196,63 +1174,44 @@ acceptDistributedTracePayloadHttpSafe (Transaction transactionPtr) payload trans
 version :: IO Text
 version = do
   cVersion <- newrelic_version
-  string <- peekCString cVersion
-  pure $ Text.pack string
+  string <- ByteString.packCString cVersion
+  pure $ Encoding.decodeUtf8 string
 
 ----------------------
 -- Helper functions --
 ----------------------
 
-destroy :: Storable a => a -> (Ptr a -> IO b) -> IO b
-destroy ptr f =
-  allocatePointerWith ptr $ f
+destroy :: Storable a => a -> FreeAfter b (Ptr a)
+destroy ptr =
+  allocatePointerWith ptr
 
-withTextCString :: Text -> (CString -> IO a) -> IO a
+withTextCString :: Text -> FreeAfter a CString
 withTextCString text =
-  withCString (Text.unpack text)
+  FreeAfter $ ByteString.useAsCString (Encoding.encodeUtf8 text)
 
-withMaybeTextCString :: Maybe Text -> (CString -> IO a) -> IO a
-withMaybeTextCString maybeText callback =
+withMaybeTextCString :: Maybe Text -> FreeAfter a CString
+withMaybeTextCString maybeText =
   case maybeText of
     Just text ->
-      withTextCString text callback
+      withTextCString text
     Nothing ->
-      callback nullPtr
+      pure nullPtr
 
-allocatePointerWith :: Storable a => a -> (Ptr a -> IO b) -> IO b
-allocatePointerWith value callback =
-  alloca $ \ptr -> do
-    poke ptr value
-    callback ptr
+allocatePointerWith :: Storable a => a -> FreeAfter b (Ptr a)
+allocatePointerWith value = do
+  ptr <- FreeAfter alloca
+  liftIO $ poke ptr value
+  pure ptr
 
-cStringToText :: CString -> IO Text
-cStringToText cString =
-  fmap (Text.pack) $ peekCString cString
+pokeTextOff :: Ptr a -> Int -> Text -> FreeAfter b ()
+pokeTextOff ptr offset text = do
+  cstring <- withTextCString text
+  liftIO $ pokeByteOff ptr offset cstring
 
-cStringToMaybeText :: CString -> IO (Maybe Text)
-cStringToMaybeText cString =
-  if cString == nullPtr
-    then pure Nothing
-    else fmap (Just . Text.pack) $ peekCString cString
-
-peekTextOff :: Ptr a -> Int -> IO Text
-peekTextOff ptr offset = do
-  value <- peekByteOff ptr offset
-  cStringToText value
-
-peekMaybeTextOff :: Ptr a -> Int -> IO (Maybe Text)
-peekMaybeTextOff ptr offset = do
-  value <- peekByteOff ptr offset
-  cStringToMaybeText value
-
-pokeTextOff :: Ptr a -> Int -> Text -> IO ()
-pokeTextOff ptr offset text =
-  withTextCString text $ pokeByteOff ptr offset
-
-pokeMaybeTextOff :: Ptr a -> Int -> Maybe Text -> IO ()
+pokeMaybeTextOff :: Ptr a -> Int -> Maybe Text -> FreeAfter b ()
 pokeMaybeTextOff ptr offset maybeText =
   case maybeText of
-    Nothing -> pokeByteOff ptr offset nullPtr
+    Nothing -> liftIO $ pokeByteOff ptr offset nullPtr
     Just text -> pokeTextOff ptr offset text
 
 boolToCInt :: Bool -> CInt
