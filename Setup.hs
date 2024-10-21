@@ -1,3 +1,4 @@
+{-# LANGUAGE CPP #-}
 import Distribution.PackageDescription (HookedBuildInfo, PackageDescription, emptyHookedBuildInfo, extraLibDirs, includeDirs, libBuildInfo, library)
 import Distribution.Simple (Args, confHook, defaultMainWithHooks, postClean, preConf, simpleUserHooks)
 import Distribution.Simple.LocalBuildInfo (LocalBuildInfo (localPkgDescr))
@@ -50,6 +51,9 @@ makeLibNewrelic _ _ = do
           _ <- readProcess
             "sed"
             [ "-Ei"
+#ifdef darwin_HOST_OS
+            , ""
+#endif
             , "s/AGENT_VERSION.*/AGENT_VERSION := " <> newrelicVersion <> ".0/"
             , "vendor/newrelic/make/version.mk"
             ]
