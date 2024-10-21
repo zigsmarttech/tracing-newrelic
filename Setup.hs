@@ -60,7 +60,7 @@ makeLibNewrelic _ _ = do
             ""
           readProcess
             "make"
-            ["static", "CFLAGS='-Wno-missing-field-initializers -Wno-single-bit-bitfield-constant-conversion -Wno-strict-prototypes -Wno-implicit-fallthrough'"]
+            ["static", "CFLAGS='-Wno-missing-field-initializers'", "CFLAGS='-Wno-error=single-bit-bitfield-constant-conversion'", "CFLAGS='-Wno-error=strict-prototypes'", "CFLAGS='-Wno-error=implicit-fallthrough'"]
             ""
     pure emptyHookedBuildInfo
 
