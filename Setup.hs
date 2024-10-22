@@ -1,4 +1,8 @@
 {-# LANGUAGE CPP #-}
+#ifdef darwin_HOST_OS
+import Distribution.Simple
+main = defaultMain
+#else
 import Distribution.PackageDescription (HookedBuildInfo, PackageDescription, emptyHookedBuildInfo, extraLibDirs, includeDirs, libBuildInfo, library)
 import Distribution.Simple (Args, confHook, defaultMainWithHooks, postClean, preConf, simpleUserHooks)
 import Distribution.Simple.LocalBuildInfo (LocalBuildInfo (localPkgDescr))
@@ -60,7 +64,7 @@ makeLibNewrelic _ _ = do
             ""
           readProcess
             "make"
-            ["static", "CFLAGS='-Wno-missing-field-initializers'", "CFLAGS='-Wno-error=single-bit-bitfield-constant-conversion'", "CFLAGS='-Wno-error=strict-prototypes'", "CFLAGS='-Wno-error=implicit-fallthrough'"]
+            ["static", "CFLAGS='-Wno-missing-field-initializers'"]
             ""
     pure emptyHookedBuildInfo
 
@@ -94,3 +98,4 @@ updateExtraLibAndIncludeDirs localBuildInfo = do
 cleanLibNewrelic :: Args -> CleanFlags -> PackageDescription -> () -> IO ()
 cleanLibNewrelic _ _ _ _ =
   removeDirectoryRecursive newrelicBuildDir
+#endif
