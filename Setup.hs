@@ -1,38 +1,4 @@
 {-# LANGUAGE CPP #-}
-#ifdef darwin_HOST_OS
-import Distribution.PackageDescription (extraLibDirs, includeDirs, libBuildInfo, library)
-import Distribution.Simple
-import Distribution.Simple.LocalBuildInfo (LocalBuildInfo (localPkgDescr))
-main =
-  defaultMainWithHooks
-    simpleUserHooks
-      { confHook = \info flags -> do
-          localBuildInfo <- confHook simpleUserHooks info flags
-          updateExtraLibAndIncludeDirs localBuildInfo
-      }
-
-updateExtraLibAndIncludeDirs :: LocalBuildInfo -> IO LocalBuildInfo
-updateExtraLibAndIncludeDirs localBuildInfo = do
-  let packageDescription = localPkgDescr localBuildInfo
-      (Just lib) = library packageDescription
-      libBuild = libBuildInfo lib
-  pure
-    localBuildInfo
-      { localPkgDescr =
-          packageDescription
-            { library =
-                Just
-                  $ lib
-                    { libBuildInfo =
-                        libBuild
-                          { extraLibDirs = "/usr/local/lib" : extraLibDirs libBuild,
-                            includeDirs = "/usr/local/lib" : includeDirs libBuild
-                          }
-                    }
-            }
-      }
-
-#else
 import Distribution.PackageDescription (HookedBuildInfo, PackageDescription, emptyHookedBuildInfo, extraLibDirs, includeDirs, libBuildInfo, library)
 import Distribution.Simple (Args, confHook, defaultMainWithHooks, postClean, preConf, simpleUserHooks)
 import Distribution.Simple.LocalBuildInfo (LocalBuildInfo (localPkgDescr))
@@ -90,7 +56,13 @@ makeLibNewrelic _ _ = do
             ""
           readProcess
             "make"
-            ["static", "CFLAGS='-Wno-missing-field-initializers'"]
+            [ "static"
+#ifdef darwin_HOST_OS
+            , "CFLAGS='-Wno-error'"
+#else
+            , "CFLAGS='-Wno-missing-field-initializers'"
+#endif
+            ]
             ""
     pure emptyHookedBuildInfo
 
@@ -124,4 +96,4 @@ updateExtraLibAndIncludeDirs localBuildInfo = do
 cleanLibNewrelic :: Args -> CleanFlags -> PackageDescription -> () -> IO ()
 cleanLibNewrelic _ _ _ _ =
   removeDirectoryRecursive newrelicBuildDir
-#endif
+
