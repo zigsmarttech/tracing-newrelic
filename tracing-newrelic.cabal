@@ -6,17 +6,15 @@ homepage:      https://github.com/NoRedInk/tracing-newrelic
 author:        NoRedInk
 maintainer:    eng@noredink.com
 copyright:     2019 NoRedInk Corp.
-build-type: Simple
+build-type:    Custom
 extra-source-files:
     README.md
 
 
--- custom-setup
---   setup-depends:
---       Cabal
---     , base
---     , directory
---     , process
+custom-setup
+  setup-depends:
+      Cabal
+    , base
 
 library
   exposed-modules:
