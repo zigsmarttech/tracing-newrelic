@@ -83,13 +83,9 @@ makeLibNewrelic _ _ = do
       withCurrentDirectory newrelicSdkDir
         $ do
           _ <- readProcess
-            "sed"
-            [ "-Ei"
-#ifdef darwin_HOST_OS
-            , ""
-#endif
-            , "s/AGENT_VERSION.*/AGENT_VERSION := " <> newrelicVersion <> ".0/"
-            , "vendor/newrelic/make/version.mk"
+            "cp"
+            [ "VERSION"
+            , "vendor/VERSION"
             ]
             ""
           readProcess
