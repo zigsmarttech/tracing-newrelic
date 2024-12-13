@@ -1,22 +1,30 @@
 {-# LANGUAGE CPP #-}
+
 import Distribution.PackageDescription (HookedBuildInfo, PackageDescription, emptyHookedBuildInfo, extraLibDirs, includeDirs, libBuildInfo, library)
-import Distribution.Simple (Args, confHook, defaultMainWithHooks, postClean, preConf, simpleUserHooks)
+import Distribution.Simple (Args, confHook, defaultMain, defaultMainWithHooks, postClean, preConf, simpleUserHooks)
 import Distribution.Simple.LocalBuildInfo (LocalBuildInfo (localPkgDescr))
 import Distribution.Simple.Setup (CleanFlags, ConfigFlags)
 import System.Directory (createDirectoryIfMissing, getCurrentDirectory, removeDirectoryRecursive, withCurrentDirectory)
+import System.Environment (lookupEnv)
 import System.Process (readProcess)
 
 
 main :: IO ()
-main =
-  defaultMainWithHooks
-    simpleUserHooks
-      { preConf = makeLibNewrelic,
-        confHook = \info flags -> do
-          localBuildInfo <- confHook simpleUserHooks info flags
-          updateExtraLibAndIncludeDirs localBuildInfo,
-        postClean = cleanLibNewrelic
-      }
+main = do
+  shouldBuild <- lookupEnv "TRACING_NEWRELIC_BUILD_SDK"
+  if shouldBuild == Just "NO"
+    then defaultMain
+    else withHooks
+  where
+    withHooks =
+      defaultMainWithHooks
+        simpleUserHooks
+          { preConf = makeLibNewrelic,
+            confHook = \info flags -> do
+                localBuildInfo <- confHook simpleUserHooks info flags
+                updateExtraLibAndIncludeDirs localBuildInfo,
+            postClean = cleanLibNewrelic
+          }
 
 newrelicVersion :: String
 newrelicVersion = "1.3.0"
@@ -96,4 +104,3 @@ updateExtraLibAndIncludeDirs localBuildInfo = do
 cleanLibNewrelic :: Args -> CleanFlags -> PackageDescription -> () -> IO ()
 cleanLibNewrelic _ _ _ _ =
   removeDirectoryRecursive newrelicBuildDir
-
